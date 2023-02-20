@@ -1,0 +1,19 @@
+[package]
+name = "py_cavalier_contours"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "py_cavalier_contours"
+crate-type = ["cdylib"]
+
+[dependencies]
+cavalier_contours_ffi = { git = "https://github.com/jbuckmccready/cavalier_contours", rev = "ed586eb"}
+
+[build-dependencies]
+cargo_metadata = "0.15.3"
+cbindgen = "0.24.3"
+
+[package.metadata.maturin]
+name = "py_cavalier_contours._py_cavalier_contours"
