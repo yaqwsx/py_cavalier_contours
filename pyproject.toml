@@ -1,10 +1,17 @@
 [build-system]
-requires = ["maturin>=0.14,<0.15"]
+requires = ["maturin>=0.14,<0.15", "cffi"]
 build-backend = "maturin"
 
 [project]
 name = "py_cavalier_contours"
 requires-python = ">=3.7"
+license = {file = "LICENSE"}
+authors = [
+  {name = "Jan Mrázek", email = "email@honzamrazek.cz"}
+]
+maintainers = [
+  {name = "Jan Mrázek", email = "email@honzamrazek.cz"}
+]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
