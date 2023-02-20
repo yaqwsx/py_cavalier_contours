@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "py_cavalier_contours"
 requires-python = ">=3.7"
-license = {file = "LICENSE"}
+license = {file = "LICENCE"}
 authors = [
   {name = "Jan Mrázek", email = "email@honzamrazek.cz"}
 ]
