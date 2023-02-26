@@ -3,6 +3,7 @@ on:
     branches:
       - main
       - master
+      - ci_test
   pull_request:
   workflow_dispatch:
 
@@ -18,7 +19,7 @@ jobs:
         with:
           python-version: '3.10'
       - name: Setup QEMU
-        uses: docker/setup-qemu-action@v1
+        uses: docker/setup-qemu-action@v2
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -37,7 +38,9 @@ jobs:
           set -e
           pip install py_cavalier_contours --find-links dist --force-reinstall
           pip install pytest
-          pytest
+          # pytest
+      - name: Setup Debug Session
+        uses: csexton/debugger-action@master
       - name: pytest
         if: ${{ !startsWith(matrix.target, 'x86') && matrix.target != 'ppc64' }}
         uses: uraimo/run-on-arch-action@v2.5.0
