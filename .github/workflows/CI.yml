@@ -1,9 +1,5 @@
 on:
   push:
-    branches:
-      - main
-      - master
-      - ci_test
   pull_request:
   workflow_dispatch:
 
@@ -47,13 +43,11 @@ jobs:
           distro: ubuntu22.04
           githubToken: ${{ github.token }}
           install: |
-            set -x
             apt-get update
             apt-get install -y --no-install-recommends python3 python3-pip python3-cffi
             pip3 install -U pip pytest
           run: |
             set -e
-            python3 -c "import cffi; print(cffi.__file__)"
             pip3 install py_cavalier_contours --find-links dist
             pytest
 
