@@ -36,11 +36,11 @@ jobs:
           pip install dist/*.whl
           pytest
       - name: pytest
-        if: ${{ !startsWith(matrix.target, 'x86') && matrix.target != 'ppc64' }}
+        if: ${{ !startsWith(matrix.target, 'x86') && matrix.target != 'ppc64' && matrix.target != 'armv7' }}
         uses: uraimo/run-on-arch-action@v2.5.0
         with:
           arch: ${{ matrix.target }}
-          distro: ubuntu22.04
+          distro: ubuntu24.04
           githubToken: ${{ github.token }}
           install: |
             apt-get update
@@ -102,7 +102,7 @@ jobs:
           name: wheels-macos-${{ matrix.target }}
           path: dist
       - name: pytest
-        if: ${{ !startsWith(matrix.target, 'aarch64') }}
+        if: ${{ startsWith(matrix.target, 'aarch64') }}
         shell: bash
         run: |
           set -e
