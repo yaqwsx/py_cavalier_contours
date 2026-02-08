@@ -32,8 +32,8 @@ jobs:
         shell: bash
         run: |
           set -e
-          pip install py_cavalier_contours --find-links dist
           pip install pytest
+          pip install dist/*.whl
           pytest
       - name: pytest
         if: ${{ !startsWith(matrix.target, 'x86') && matrix.target != 'ppc64' }}
@@ -48,7 +48,7 @@ jobs:
             pip3 install -U pip pytest
           run: |
             set -e
-            pip3 install py_cavalier_contours --find-links dist
+            pip3 install dist/*.whl
             pytest
 
   windows:
@@ -77,8 +77,8 @@ jobs:
         shell: bash
         run: |
           set -e
-          pip install py_cavalier_contours --find-links dist --force-reinstall
           pip install pytest
+          pip install dist/*.whl
           pytest
 
   macos:
@@ -106,8 +106,8 @@ jobs:
         shell: bash
         run: |
           set -e
-          pip install py_cavalier_contours --find-links dist --force-reinstall
           pip install pytest
+          pip install dist/*.whl
           pytest
 
   release:
