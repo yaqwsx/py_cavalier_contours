@@ -9,11 +9,12 @@ name = "py_cavalier_contours"
 crate-type = ["cdylib"]
 
 [dependencies]
-cavalier_contours_ffi = { git = "https://github.com/jbuckmccready/cavalier_contours", rev = "ed586eb"}
+cavalier_contours_ffi = { git = "https://github.com/jbuckmccready/cavalier_contours", rev = "768834191e7f59903bbff21152878c6ed542c817"}
+cavalier_contours = { git = "https://github.com/jbuckmccready/cavalier_contours", rev = "768834191e7f59903bbff21152878c6ed542c817"}
 
 [build-dependencies]
 cargo_metadata = "0.15.3"
-cbindgen = "0.24.3"
+cbindgen = "0.29.2"
 
 [package.metadata.maturin]
-name = "py_cavalier_contours._py_cavalier_contours"
+name = "py_cavalier_contours.py_cavalier_contours"

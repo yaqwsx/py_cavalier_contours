@@ -3,7 +3,11 @@ from typing import Iterable, Union, Tuple, List, Any
 from collections.abc import MutableSequence, Sized
 from itertools import zip_longest
 
-from ._py_cavalier_contours import lib, ffi
+from .py_cavalier_contours import lib, ffi
+from .types import (
+    ClosestPointResult, PointAtLengthResult, BasicIntersect,
+    OverlappingIntersect, IntersectsResult,
+)
 
 class GeometryError(RuntimeError):
     pass
@@ -12,17 +16,10 @@ class Vertex:
     __slots__ = "native",
 
     def __init__(self, x: float = 0, y: float = 0, bulge: float = 0) -> None:
-        Vertex._validate_bulge(bulge)
-
         self.native = ffi.new("cavc_vertex*")
         self.native.x = x
         self.native.y = y
         self.native.bulge = bulge
-
-    @staticmethod
-    def _validate_bulge(bulge: float) -> None:
-        if bulge < -1 or bulge > 1:
-            raise ValueError("Bulge has to be in interval <-1;1>")
 
     @property
     def x(self) -> float:
@@ -46,12 +43,11 @@ class Vertex:
 
     @bulge.setter
     def bulge(self, value: float) -> None:
-        Vertex._validate_bulge(value)
         self.native.bulge = value
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Vertex):
-            raise NotImplemented
+            return NotImplemented
         return self.x == other.x and self.y == other.y and self.bulge == other.bulge
 
     def __str__(self) -> str:
@@ -92,7 +88,7 @@ class Polyline(MutableSequence[Vertex]):
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Iterable):
-            raise NotImplemented
+            return NotImplemented
         return all(l == r for l, r in zip_longest(self, other))
 
     def _ensure_in_range(self, i: int) -> int:
@@ -118,7 +114,7 @@ class Polyline(MutableSequence[Vertex]):
             i = self._ensure_in_range(i)
             if not isinstance(item, Vertex):
                 raise TypeError("Polyline can only contain vertices")
-            lib.cavc_pline_set_vertex(self.native, i, item.native)
+            lib.cavc_pline_set_vertex(self.native, i, item.native[0])
 
     def __delitem__(self, i: Union[int, slice]) -> None:
         if isinstance(i, slice):
@@ -175,15 +171,16 @@ class Polyline(MutableSequence[Vertex]):
         Return area of the polyline
         """
         a = ffi.new("double*")
-        lib.cavc_pline_eval_path_area(self.native, a)
+        lib.cavc_pline_eval_area(self.native, a)
         return float(a[0])
 
     def winding_number(self, x: float, y: float) -> int:
         """
-        Return winding number
+        Return winding number of a point relative to the polyline.
+        Non-zero means the point is inside.
         """
         wn = ffi.new("int32_t*")
-        lib.cavc_pline_eval_path_area(self.native, x, y, wn)
+        lib.cavc_pline_eval_wn(self.native, x, y, wn)
         return int(wn[0])
 
     def reverse(self) -> None:
@@ -208,7 +205,7 @@ class Polyline(MutableSequence[Vertex]):
         """
         Remove repeated vertices
         """
-        lib.cavc_pline_remove_repeated_pos(self.native, eps)
+        lib.cavc_pline_remove_repeat_pos(self.native, eps)
 
     def remove_redundant(self, eps: float = 1e-5) -> None:
         """
@@ -236,7 +233,7 @@ class Polyline(MutableSequence[Vertex]):
         """
         Insert a vertex at given index
         """
-        raise NotImplemented
+        raise NotImplementedError("insert is not yet supported")
 
     def reserve(self, additional: int) -> None:
         """
@@ -248,10 +245,10 @@ class Polyline(MutableSequence[Vertex]):
         """
         Compute bounding box and return it as (minx, miny, maxx, maxy)
         """
-        minx = ffi.new("float*")
-        miny = ffi.new("float*")
-        maxx = ffi.new("float*")
-        maxy = ffi.new("float*")
+        minx = ffi.new("double*")
+        miny = ffi.new("double*")
+        maxx = ffi.new("double*")
+        maxy = ffi.new("double*")
         retval = lib.cavc_pline_eval_extents(self.native, minx, miny, maxx, maxy)
         if retval == 2:
             raise GeometryError("Cannot evaluate bounding box on less than 1 vertice")
@@ -303,50 +300,202 @@ class Polyline(MutableSequence[Vertex]):
         lib.cavc_pline_parallel_offset(self.native, distance, options, result)
         return Polyline._pythonizePlist(result[0])
 
-    def _bool_op(self, other: Polyline, op: int, pos_equal_eps: float,
-                 slice_join_eps: float) -> Tuple[List[Polyline], List[Polyline]]:
-        options = ffi.new("cavc_pline_parallel_offset_o*")
+    def _bool_op(self, other: Polyline, op: int,
+                 pos_equal_eps: float) -> Tuple[List[Polyline], List[Polyline]]:
+        options = ffi.new("cavc_pline_boolean_o*")
         lib.cavc_pline_boolean_o_init(options)
         options.pos_equal_eps = pos_equal_eps
-        options.slice_join_eps = slice_join_eps
 
         pos_result = ffi.new("cavc_plinelist**")
         neg_result = ffi.new("cavc_plinelist**")
-        lib.cavc_pline_boolean(self.native, other.native, 0, pos_result, neg_result)
-        return Polyline._pythonizePlist(pos_result), Polyline._pythonizePlist(neg_result)
+        lib.cavc_pline_boolean(self.native, other.native, op, options, pos_result, neg_result)
+        return Polyline._pythonizePlist(pos_result[0]), Polyline._pythonizePlist(neg_result[0])
 
-    def union(self, other: Polyline, pos_equal_eps: float = 1e-5,
-              slice_join_eps: float = 1e-5) -> Tuple[List[Polyline], List[Polyline]]:
+    def union(self, other: Polyline,
+              pos_equal_eps: float = 1e-5) -> Tuple[List[Polyline], List[Polyline]]:
         """
-        Return union of two polylines. Returns a list of positive polylines
-        (outlines) and negative polylines (holes). Does not modify the original
-        polylines.
+        Return union of two polylines. Returns a tuple of (positive polylines,
+        negative polylines) where positive are outlines and negative are holes.
         """
-        return self._bool_op(other, 0, pos_equal_eps, slice_join_eps)
+        return self._bool_op(other, 0, pos_equal_eps)
 
-    def intersect(self, other: Polyline, pos_equal_eps: float = 1e-5,
-              slice_join_eps: float = 1e-5) -> Tuple[List[Polyline], List[Polyline]]:
+    def intersect(self, other: Polyline,
+              pos_equal_eps: float = 1e-5) -> Tuple[List[Polyline], List[Polyline]]:
         """
-        Return intersection of two polylines. Returns a list of positive
-        polylines (outlines) and negative polylines (holes). Does not modify the
-        original polylines.
+        Return intersection of two polylines. Returns a tuple of (positive
+        polylines, negative polylines).
         """
-        return self._bool_op(other, 1, pos_equal_eps, slice_join_eps)
+        return self._bool_op(other, 1, pos_equal_eps)
 
-    def difference(self, other: Polyline, pos_equal_eps: float = 1e-5,
-              slice_join_eps: float = 1e-5) -> Tuple[List[Polyline], List[Polyline]]:
+    def difference(self, other: Polyline,
+              pos_equal_eps: float = 1e-5) -> Tuple[List[Polyline], List[Polyline]]:
         """
-        Return difference self - other. Returns a list of positive polylines
-        (outlines) and negative polylines (holes). Does not modify the original
-        polylines.
+        Return difference self - other. Returns a tuple of (positive polylines,
+        negative polylines).
         """
-        return self._bool_op(other, 2, pos_equal_eps, slice_join_eps)
+        return self._bool_op(other, 2, pos_equal_eps)
 
-    def symmetric_difference(self, other: Polyline, pos_equal_eps: float = 1e-5,
-              slice_join_eps: float = 1e-5) -> Tuple[List[Polyline], List[Polyline]]:
+    def symmetric_difference(self, other: Polyline,
+              pos_equal_eps: float = 1e-5) -> Tuple[List[Polyline], List[Polyline]]:
         """
-        Return complementary difference. Returns a list of positive polylines
-        (outlines) and negative polylines (holes). Does not modify the original
-        polylines.
+        Return symmetric difference. Returns a tuple of (positive polylines,
+        negative polylines).
         """
-        return self._bool_op(other, 3, pos_equal_eps, slice_join_eps)
+        return self._bool_op(other, 3, pos_equal_eps)
+
+    def has_self_intersect(self, pos_equal_eps: float = 1e-5) -> bool:
+        """
+        Check if the polyline has any self-intersections.
+        """
+        options = ffi.new("cavc_pline_self_intersect_o*")
+        lib.cavc_pline_self_intersect_o_init(options)
+        options.pos_equal_eps = pos_equal_eps
+
+        result = ffi.new("uint8_t*")
+        lib.cavc_pline_scan_for_self_intersect(self.native, options, result)
+        return bool(result[0])
+
+    _CONTAINS_RESULTS = {
+        0: "invalid",
+        1: "pline1_inside_pline2",
+        2: "pline2_inside_pline1",
+        3: "disjoint",
+        4: "intersected",
+    }
+
+    def contains(self, other: Polyline, pos_equal_eps: float = 1e-5) -> str:
+        """
+        Test the containment relationship between this polyline and another.
+
+        Returns one of:
+        - "pline1_inside_pline2": self is inside other
+        - "pline2_inside_pline1": other is inside self
+        - "disjoint": no overlap
+        - "intersected": polylines intersect
+        - "invalid": invalid input
+        """
+        options = ffi.new("cavc_pline_contains_o*")
+        lib.cavc_pline_contains_o_init(options)
+        options.pos_equal_eps = pos_equal_eps
+
+        result = ffi.new("uint32_t*")
+        lib.cavc_pline_contains(self.native, other.native, options, result)
+        return self._CONTAINS_RESULTS.get(result[0], "unknown")
+
+    @property
+    def orientation(self) -> str:
+        """
+        Get the orientation of the polyline.
+
+        Returns "open", "cw" (clockwise), or "ccw" (counter-clockwise).
+        """
+        o = ffi.new("uint32_t*")
+        lib.cavc_pline_orientation(self.native, o)
+        return {0: "open", 1: "cw", 2: "ccw"}.get(o[0], "unknown")
+
+    def closest_point(self, x: float, y: float,
+                      pos_equal_eps: float = 1e-5) -> ClosestPointResult:
+        """
+        Find the closest point on this polyline to the given point.
+
+        Returns a ClosestPointResult with seg_index, x, y, distance.
+        Raises GeometryError if the polyline has no segments.
+        """
+        seg_idx = ffi.new("uint32_t*")
+        cx = ffi.new("double*")
+        cy = ffi.new("double*")
+        dist = ffi.new("double*")
+        ret = lib.cavc_pline_closest_point(
+            self.native, x, y, pos_equal_eps, seg_idx, cx, cy, dist)
+        if ret == 2:
+            raise GeometryError("Polyline has no segments")
+        return ClosestPointResult(
+            seg_index=int(seg_idx[0]), x=float(cx[0]),
+            y=float(cy[0]), distance=float(dist[0]))
+
+    def point_at_length(self, target_length: float) -> PointAtLengthResult:
+        """
+        Find the point at a given path length along the polyline.
+
+        Raises GeometryError if the target length exceeds the total path length.
+        """
+        seg_idx = ffi.new("uint32_t*")
+        px = ffi.new("double*")
+        py = ffi.new("double*")
+        ret = lib.cavc_pline_find_point_at_path_length(
+            self.native, target_length, seg_idx, px, py)
+        if ret == 2:
+            raise GeometryError(
+                "Target length exceeds total path length or polyline is empty")
+        return PointAtLengthResult(
+            seg_index=int(seg_idx[0]), x=float(px[0]), y=float(py[0]))
+
+    def to_lines(self, error_distance: float = 0.01) -> Polyline:
+        """
+        Convert all arc segments to approximate line segments.
+
+        Returns a new Polyline with all bulge values equal to zero.
+        """
+        result = ffi.new("cavc_pline**")
+        lib.cavc_pline_arcs_to_approx_lines(self.native, error_distance, result)
+        pline = Polyline.__new__(Polyline)
+        pline.native = result[0]
+        return pline
+
+    def rotate_start(self, index: int, x: float, y: float,
+                     pos_equal_eps: float = 1e-5) -> None:
+        """
+        Rotate the start of a closed polyline to a new index and split point.
+
+        Modifies the polyline in place.
+        Raises GeometryError if the polyline is open or the operation fails.
+        """
+        ret = lib.cavc_pline_rotate_start(
+            self.native, index, x, y, pos_equal_eps)
+        if ret == 2:
+            raise GeometryError(
+                "Cannot rotate start: polyline may be open or index invalid")
+
+    def find_intersects(self, other: Polyline,
+                        pos_equal_eps: float = 1e-5) -> IntersectsResult:
+        """
+        Find all intersections between this polyline and another.
+
+        Returns an IntersectsResult containing basic and overlapping intersections.
+        """
+        result_ptr = ffi.new("cavc_intersects_result**")
+        lib.cavc_pline_find_intersects(
+            self.native, other.native, pos_equal_eps, result_ptr)
+        result_handle = result_ptr[0]
+
+        # Extract basic intersections
+        basic_count = ffi.new("uint32_t*")
+        lib.cavc_intersects_result_get_basic_count(result_handle, basic_count)
+        basic_list = []
+        intr = ffi.new("cavc_basic_intersect*")
+        for i in range(basic_count[0]):
+            lib.cavc_intersects_result_get_basic(result_handle, i, intr)
+            basic_list.append(BasicIntersect(
+                seg_index1=int(intr.start_index1),
+                seg_index2=int(intr.start_index2),
+                x=float(intr.point_x), y=float(intr.point_y)))
+
+        # Extract overlapping intersections
+        overlap_count = ffi.new("uint32_t*")
+        lib.cavc_intersects_result_get_overlapping_count(
+            result_handle, overlap_count)
+        overlap_list = []
+        ointr = ffi.new("cavc_overlapping_intersect*")
+        for i in range(overlap_count[0]):
+            lib.cavc_intersects_result_get_overlapping(
+                result_handle, i, ointr)
+            overlap_list.append(OverlappingIntersect(
+                seg_index1=int(ointr.start_index1),
+                seg_index2=int(ointr.start_index2),
+                x1=float(ointr.point1_x), y1=float(ointr.point1_y),
+                x2=float(ointr.point2_x), y2=float(ointr.point2_y)))
+
+        # Free the native result
+        lib.cavc_intersects_result_f(result_handle)
+
+        return IntersectsResult(basic=basic_list, overlapping=overlap_list)

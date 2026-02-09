@@ -8,8 +8,9 @@ __pycache__/
 # C extensions
 *.so
 
-# FFI library
+# FFI library (maturin build artifacts)
 _py_cavalier_contours
+py_cavalier_contours/py_cavalier_contours
 
 # Distribution / packaging
 .Python
