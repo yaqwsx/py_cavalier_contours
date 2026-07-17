@@ -7,8 +7,6 @@ Demonstrates:
   - winding_number: visualize inside/outside status
   - contains: drag a test rectangle to test containment relationships
 """
-from copy import copy
-
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 

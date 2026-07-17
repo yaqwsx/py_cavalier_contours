@@ -14,8 +14,8 @@ from matplotlib.widgets import Slider, CheckButtons
 
 from py_cavalier_contours import Vertex, Polyline, GeometryError
 from _gui_common import (
-    draw_polyline, polyline_coords, fit_view, DraggableVertices,
-    InfoText, COLORS, FILL_COLORS, RENDER_ERROR_DIST,
+    draw_polyline, fit_view, DraggableVertices,
+    InfoText, COLORS, FILL_COLORS,
 )
 
 # ---------------------------------------------------------------------------

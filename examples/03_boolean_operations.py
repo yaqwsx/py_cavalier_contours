@@ -12,7 +12,7 @@ from matplotlib.widgets import RadioButtons, CheckButtons
 
 from py_cavalier_contours import Vertex, Polyline, GeometryError
 from _gui_common import (
-    draw_polyline, draw_polylines, fit_view, DraggableVertices,
+    draw_polyline, fit_view, DraggableVertices,
     InfoText, COLORS, FILL_COLORS,
 )
 

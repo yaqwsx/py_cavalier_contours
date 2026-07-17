@@ -4,9 +4,7 @@ Shared infrastructure for interactive matplotlib-based examples.
 Provides polyline/shape rendering, draggable vertices, info text display,
 and common color constants.
 """
-import matplotlib.pyplot as plt
-
-from py_cavalier_contours import Vertex, Polyline, Shape, GeometryError
+from py_cavalier_contours import Vertex, Polyline, Shape
 
 # ---------------------------------------------------------------------------
 # Color palette

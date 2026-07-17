@@ -1,42 +1,167 @@
+name: CI
+
 on:
   push:
+    branches: ["**"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
 jobs:
-  linux:
+  validate:
+    name: Validate metadata and version
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Parse project metadata
+        run: |
+          python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          cargo = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))
+          assert pyproject["project"]["requires-python"] == ">=3.10"
+          assert cargo["package"]["version"]
+          PY
+          cargo metadata --locked --no-deps --format-version 1 > /dev/null
+      - name: Require release tag to match Cargo version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          package_version="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+          print(tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["package"]["version"])
+          PY
+          )"
+          expected_tag="v${package_version}"
+          if [[ "${GITHUB_REF_NAME}" != "${expected_tag}" ]]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match ${expected_tag}" >&2
+            exit 1
+          fi
+
+  quality:
+    name: Format, lint, and type check
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Install project and development tools
+        run: python -m pip install -e ".[dev]"
+      - name: Python lint
+        run: ruff check py_cavalier_contours test examples
+      - name: Python type check
+        # CFFI's generated lib and CData objects expose members dynamically.
+        # Keep all other mypy checks enabled while suppressing that one class
+        # of false positives.
+        run: >-
+          mypy --disable-error-code attr-defined
+          py_cavalier_contours/__init__.py
+          py_cavalier_contours/polyline.py
+          py_cavalier_contours/shape.py
+          py_cavalier_contours/types.py
+      - name: Python tests and branch coverage
+        run: >-
+          python -m pytest
+          --cov=py_cavalier_contours
+          --cov-branch
+          --cov-report=term-missing
+          --cov-fail-under=90
+      - name: Rust format
+        run: cargo fmt --all -- --check
+      - name: Rust tests
+        run: cargo test --locked
+
+  python-support:
+    name: CPython ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install editable package
+        run: python -m pip install -e ".[dev]"
+      - name: Test supported Python
+        run: python -m pytest
+
+  rust-msrv:
+    name: Rust 1.88 minimum version
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Check minimum Rust version
+        run: cargo check --locked
+
+  linux:
+    name: Linux ${{ matrix.target }} wheel
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
       matrix:
         target: [x86_64, x86, aarch64, armv7, s390x, ppc64le]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-      - name: Setup QEMU
+          python-version: "3.10"
+      - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
-      - name: Build wheels
+      - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
+          args: --release --locked --out dist --find-interpreter
           manylinux: auto
-      - name: Upload wheels
+      - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
           name: wheels-linux-${{ matrix.target }}
-          path: dist
-      - name: pytest
-        if: ${{ startsWith(matrix.target, 'x86_64') }}
+          path: dist/*.whl
+          if-no-files-found: error
+      - name: Test installed wheel
+        if: matrix.target == 'x86_64'
         shell: bash
         run: |
-          set -e
-          pip install pytest
-          pip install dist/*.whl
-          pytest
-      - name: pytest
-        if: ${{ !startsWith(matrix.target, 'x86') && matrix.target != 'ppc64' && matrix.target != 'armv7' }}
+          project_dir="$PWD"
+          python -m pip install pytest dist/*.whl
+          cd "$RUNNER_TEMP"
+          python -m pytest "$project_dir/test"
+      - name: Test installed cross-architecture wheel
+        if: matrix.target != 'x86_64' && matrix.target != 'x86' && matrix.target != 'ppc64le' && matrix.target != 'armv7'
         uses: uraimo/run-on-arch-action@v3
         with:
           arch: ${{ matrix.target }}
@@ -47,42 +172,52 @@ jobs:
             apt-get install -y --no-install-recommends python3 python3-pip python3-cffi
             pip3 install pytest --break-system-packages
           run: |
-            set -e
+            set -eu
+            project_dir="$PWD"
             pip3 install dist/*.whl --break-system-packages
-            pytest
+            cd /tmp
+            python3 -m pytest "$project_dir/test"
 
   windows:
+    name: Windows ${{ matrix.target }} wheel
     runs-on: windows-latest
+    needs: validate
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         target: [x64, x86]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
           architecture: ${{ matrix.target }}
-      - name: Build wheels
+      - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
-      - name: Upload wheels
+          args: --release --locked --out dist --find-interpreter
+      - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
           name: wheels-windows-${{ matrix.target }}
-          path: dist
-      - name: pytest
-        if: ${{ !startsWith(matrix.target, 'aarch64') }}
+          path: dist/*.whl
+          if-no-files-found: error
+      - name: Test installed wheel
         shell: bash
         run: |
-          set -e
-          pip install pytest
-          pip install dist/*.whl
-          pytest
+          project_dir="$PWD"
+          python -m pip install pytest dist/*.whl
+          cd "$RUNNER_TEMP"
+          python -m pytest "$project_dir/test"
 
   macos:
+    name: macOS ${{ matrix.target }} wheel
+    needs: validate
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64
@@ -94,39 +229,89 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-      - name: Build wheels
+          python-version: "3.10"
+      - name: Build wheel
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
-      - name: Upload wheels
+          args: --release --locked --out dist --find-interpreter
+      - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
           name: wheels-macos-${{ matrix.target }}
-          path: dist
-      - name: pytest
+          path: dist/*.whl
+          if-no-files-found: error
+      - name: Test installed wheel
         shell: bash
         run: |
-          set -e
-          pip install pytest
-          pip install dist/*.whl
-          pytest
+          project_dir="$PWD"
+          python -m pip install pytest dist/*.whl
+          cd "$RUNNER_TEMP"
+          python -m pytest "$project_dir/test"
+
+  sdist:
+    name: Source distribution
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install build and validation tools
+        run: python -m pip install build pytest twine
+      - name: Build source distribution
+        run: python -m build --sdist --outdir dist
+      - name: Validate source distribution metadata
+        run: python -m twine check --strict dist/*.tar.gz
+      - name: Test installed source distribution
+        shell: bash
+        run: |
+          project_dir="$PWD"
+          python -m venv "$RUNNER_TEMP/sdist-venv"
+          "$RUNNER_TEMP/sdist-venv/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/sdist-venv/bin/python" -m pip install pytest dist/*.tar.gz
+          mkdir -p "$RUNNER_TEMP/sdist-test"
+          cd "$RUNNER_TEMP/sdist-test"
+          "$RUNNER_TEMP/sdist-venv/bin/python" -m pytest "$project_dir/test"
+      - name: Upload source distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
 
   release:
-    name: Release
+    name: Publish to PyPI
     runs-on: ubuntu-latest
-    if: "startsWith(github.ref, 'refs/tags/')"
-    needs: [linux, windows, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [quality, python-support, rust-msrv, linux, windows, macos, sdist]
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/p/py-cavalier-contours
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: wheels-*
+          pattern: "*"
+          path: dist
           merge-multiple: true
-      - name: Publish to PyPI
-        uses: PyO3/maturin-action@v1
-        env:
-          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+      - uses: actions/setup-python@v5
         with:
-          command: upload
-          args: --skip-existing *
+          python-version: "3.12"
+      - name: Validate release artifacts
+        run: |
+          python -m pip install twine
+          python -m twine check --strict dist/*
+          test -n "$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+          test -n "$(find dist -maxdepth 1 -name '*.tar.gz' -print -quit)"
+      - name: Publish release artifacts
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

@@ -1,28 +1,83 @@
 [build-system]
-requires = ["maturin>=1.0,<2.0", "cffi"]
+requires = ["maturin>=1.9.3,<2.0", "cffi>=1.15.1"]
 build-backend = "maturin"
 
 [project]
 name = "py_cavalier_contours"
-requires-python = ">=3.7"
-license = {file = "LICENCE"}
+dynamic = ["version"]
+description = "Native-speed 2D polyline geometry with line and circular-arc segments"
+readme = "readme.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENCE", "THIRD_PARTY_NOTICES.md"]
 authors = [
   {name = "Jan Mrázek", email = "email@honzamrazek.cz"}
 ]
 maintainers = [
   {name = "Jan Mrázek", email = "email@honzamrazek.cz"}
 ]
+keywords = ["geometry", "polyline", "offset", "boolean-operations", "arcs"]
 classifiers = [
-    "Programming Language :: Rust",
-    "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = ["cffi"]
+dependencies = ["cffi>=1.15.1"]
+
+[project.optional-dependencies]
+examples = ["matplotlib>=3.7"]
+dev = [
+  "build>=1.2",
+  "mypy>=1.10",
+  "pytest>=8",
+  "pytest-cov>=5",
+  "ruff>=0.9",
+  "twine>=5",
+  "types-cffi>=1.16",
+]
+
+[project.urls]
+Homepage = "https://github.com/yaqwsx/py_cavalier_contours"
+Documentation = "https://github.com/yaqwsx/py_cavalier_contours#readme"
+Issues = "https://github.com/yaqwsx/py_cavalier_contours/issues"
+Repository = "https://github.com/yaqwsx/py_cavalier_contours"
+Changelog = "https://github.com/yaqwsx/py_cavalier_contours/blob/main/CHANGELOG.md"
 
 [tool.maturin]
 bindings = "cffi"
+exclude = [".claude/**", ".learning/**"]
 
 [tool.pytest.ini_options]
 addopts = [
-    "--import-mode=importlib",
+  "--import-mode=importlib",
 ]
+
+[tool.coverage.run]
+branch = true
+source = ["py_cavalier_contours"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [
+  "py_cavalier_contours/py_cavalier_contours",
+  "py_cavalier_contours/_py_cavalier_contours",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
