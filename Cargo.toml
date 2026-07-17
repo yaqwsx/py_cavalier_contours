@@ -2,6 +2,11 @@
 name = "py_cavalier_contours"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.88"
+description = "Rust/CFFI backend for py_cavalier_contours"
+license = "MIT"
+repository = "https://github.com/yaqwsx/py_cavalier_contours"
+readme = "readme.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]

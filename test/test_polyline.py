@@ -39,6 +39,15 @@ class TestConstruction:
         unit_square.closed = True
         assert unit_square.closed is True
 
+    def test_constructor_rejects_non_vertex_elements(self):
+        with pytest.raises(TypeError, match="only contain vertices"):
+            Polyline([(0, 0, 0)])
+
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    def test_constructor_rejects_non_finite_vertex_coordinates(self, value):
+        with pytest.raises(ValueError, match="finite"):
+            Vertex(value, 0)
+
 
 # ---------------------------------------------------------------------------
 # Sequence protocol
@@ -93,6 +102,28 @@ class TestSequenceProtocol:
         assert v.x == pytest.approx(10)
         assert v.y == pytest.approx(20)
 
+    def test_append_rejects_non_vertex(self):
+        with pytest.raises(TypeError, match="only contain vertices"):
+            Polyline().append((10, 20, 0))
+
+    @pytest.mark.parametrize(
+        ("index", "expected_x"),
+        [
+            (0, [9, 0, 1, 2]),
+            (1, [0, 9, 1, 2]),
+            (99, [0, 1, 2, 9]),
+            (-99, [9, 0, 1, 2]),
+        ],
+    )
+    def test_insert_matches_mutable_sequence_semantics(self, index, expected_x):
+        p = Polyline([Vertex(0, 0), Vertex(1, 0), Vertex(2, 0)])
+        p.insert(index, Vertex(9, 0))
+        assert [v.x for v in p] == expected_x
+
+    def test_insert_rejects_non_vertex(self):
+        with pytest.raises(TypeError, match="only contain vertices"):
+            Polyline().insert(0, (1, 2, 3))
+
     def test_iteration(self, unit_square):
         coords = [(v.x, v.y) for v in unit_square]
         assert coords == [
@@ -106,6 +137,16 @@ class TestSequenceProtocol:
         with pytest.raises(NotImplementedError):
             unit_square[0:2]
 
+    def test_slice_assignment_and_deletion_not_supported(self, unit_square):
+        with pytest.raises(NotImplementedError):
+            unit_square[0:2] = [Vertex(2, 2)]
+        with pytest.raises(NotImplementedError):
+            del unit_square[0:2]
+
+    def test_non_integer_index_rejected(self, unit_square):
+        with pytest.raises(TypeError, match="indices must be integers"):
+            unit_square["0"]
+
     def test_add_polylines(self, unit_square):
         extra = Polyline([Vertex(9, 9)])
         combined = unit_square + extra
@@ -116,6 +157,26 @@ class TestSequenceProtocol:
         p = Polyline([Vertex(0, 0)])
         p += [Vertex(1, 1)]
         assert len(p) == 2
+
+    def test_radd_vertices(self, unit_square):
+        combined = [Vertex(-1, -1)] + unit_square
+        assert [(v.x, v.y) for v in list(combined)[:2]] == [(-1, -1), (0, 0)]
+
+    def test_equality_detects_extra_none_item(self):
+        p = Polyline([Vertex(1, 2)])
+        assert p != [Vertex(1, 2), None]
+        assert Polyline() != [None]
+
+    def test_close_is_idempotent_and_context_manager_closes(self):
+        with Polyline([Vertex(0, 0)]) as p:
+            assert len(p) == 1
+        with pytest.raises(GeometryError, match="native status"):
+            len(p)
+        p.close()
+
+        with pytest.raises(GeometryError, match="closed"):
+            with p:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +300,13 @@ class TestTransforms:
         assert maxx == pytest.approx(11)
         assert maxy == pytest.approx(21)
 
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    def test_transforms_reject_non_finite_values(self, unit_square, value):
+        with pytest.raises(ValueError, match="finite"):
+            unit_square.scale(value)
+        with pytest.raises(ValueError, match="finite"):
+            unit_square.translate(value, 0)
+
 
 # ---------------------------------------------------------------------------
 # Vertex cleanup
@@ -263,6 +331,16 @@ class TestVertexCleanup:
         p.remove_redundant()
         assert len(p) < original_len
 
+    def test_clear_and_reserve(self, unit_square):
+        unit_square.reserve(10)
+        unit_square.clear()
+        assert len(unit_square) == 0
+
+    @pytest.mark.parametrize("value, exception", [(-1, ValueError), (1.5, TypeError)])
+    def test_reserve_rejects_invalid_capacity(self, unit_square, value, exception):
+        with pytest.raises(exception):
+            unit_square.reserve(value)
+
 
 # ---------------------------------------------------------------------------
 # Closest point / point at length
@@ -282,6 +360,19 @@ class TestClosestPoint:
         assert result.y == pytest.approx(0)
         assert result.distance == pytest.approx(1.0)
 
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    def test_rejects_non_finite_query(self, unit_square, value):
+        with pytest.raises(ValueError, match="finite"):
+            unit_square.closest_point(value, 0)
+
+    def test_rejects_non_positive_epsilon(self, unit_square):
+        with pytest.raises(ValueError, match="greater than zero"):
+            unit_square.closest_point(0, 0, pos_equal_eps=0)
+
+    def test_empty_polyline_raises(self):
+        with pytest.raises(GeometryError, match="no segments"):
+            Polyline().closest_point(0, 0)
+
 
 class TestPointAtLength:
     def test_midpoint_of_first_edge(self, unit_square):
@@ -294,6 +385,19 @@ class TestPointAtLength:
         with pytest.raises(GeometryError):
             unit_square.point_at_length(100.0)
 
+    def test_empty_raises_without_returning_fabricated_point(self):
+        with pytest.raises(GeometryError, match="empty"):
+            Polyline().point_at_length(0)
+
+    def test_negative_length_rejected(self, unit_square):
+        with pytest.raises(ValueError, match="non-negative"):
+            unit_square.point_at_length(-1)
+
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    def test_non_finite_length_rejected(self, unit_square, value):
+        with pytest.raises(ValueError, match="finite"):
+            unit_square.point_at_length(value)
+
 
 # ---------------------------------------------------------------------------
 # Self-intersection
@@ -303,6 +407,16 @@ class TestPointAtLength:
 class TestSelfIntersect:
     def test_simple_square_no_self_intersect(self, unit_square):
         assert unit_square.has_self_intersect() is False
+
+    def test_bow_tie_has_self_intersection(self):
+        bow_tie = Polyline([
+            Vertex(0, 0), Vertex(2, 2), Vertex(0, 2), Vertex(2, 0),
+        ])
+        assert bow_tie.has_self_intersect() is True
+
+    def test_nan_epsilon_rejected(self, unit_square):
+        with pytest.raises(ValueError, match="finite"):
+            unit_square.has_self_intersect(math.nan)
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +434,11 @@ class TestToLines:
     def test_to_lines_preserves_closed(self, unit_circle):
         lines = unit_circle.to_lines()
         assert lines.closed is True
+
+    @pytest.mark.parametrize("value", [0, -1, math.nan, math.inf])
+    def test_invalid_error_distance_rejected(self, unit_circle, value):
+        with pytest.raises(ValueError):
+            unit_circle.to_lines(value)
 
 
 # ---------------------------------------------------------------------------
@@ -346,3 +465,43 @@ class TestFindIntersects:
         result = seg1.find_intersects(seg2)
         assert len(result.basic) == 0
         assert len(result.overlapping) == 0
+
+    def test_overlapping_collinear_segments(self):
+        first = Polyline([Vertex(0, 0), Vertex(3, 0)], closed=False)
+        second = Polyline([Vertex(1, 0), Vertex(2, 0)], closed=False)
+
+        result = first.find_intersects(second)
+
+        assert len(result.basic) == 0
+        assert len(result.overlapping) == 1
+        overlap = result.overlapping[0]
+        assert {(overlap.x1, overlap.y1), (overlap.x2, overlap.y2)} == {
+            (1.0, 0.0), (2.0, 0.0),
+        }
+
+    def test_rejects_non_polyline(self, unit_square):
+        with pytest.raises(TypeError, match="other must be a Polyline"):
+            unit_square.find_intersects(object())
+
+
+class TestRotateStart:
+    def test_rotates_closed_polyline_to_existing_vertex(self, unit_square):
+        unit_square.rotate_start(2, 1, 1)
+        assert (unit_square[0].x, unit_square[0].y) == pytest.approx((1, 1))
+        assert unit_square.area() == pytest.approx(1.0)
+
+    def test_rejects_open_polyline(self):
+        open_polyline = Polyline(
+            [Vertex(0, 0), Vertex(1, 0), Vertex(2, 0)], closed=False)
+        with pytest.raises(GeometryError, match="Cannot rotate start"):
+            open_polyline.rotate_start(1, 1, 0)
+
+
+class TestBinaryArgumentValidation:
+    @pytest.mark.parametrize(
+        "method",
+        ["union", "intersect", "difference", "symmetric_difference", "contains"],
+    )
+    def test_binary_operations_reject_non_polyline(self, unit_square, method):
+        with pytest.raises(TypeError, match="other must be a Polyline"):
+            getattr(unit_square, method)(object())

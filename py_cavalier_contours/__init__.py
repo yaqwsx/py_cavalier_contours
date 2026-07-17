@@ -7,3 +7,15 @@ from .types import (
     OverlappingIntersect,
     IntersectsResult,
 )
+
+__all__ = [
+    "BasicIntersect",
+    "ClosestPointResult",
+    "GeometryError",
+    "IntersectsResult",
+    "OverlappingIntersect",
+    "PointAtLengthResult",
+    "Polyline",
+    "Shape",
+    "Vertex",
+]

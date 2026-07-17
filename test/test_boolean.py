@@ -1,6 +1,8 @@
 """Tests for boolean operations (union, intersect, difference,
 symmetric_difference), offset, and containment checks on Polylines."""
 
+import math
+
 import pytest
 from py_cavalier_contours import Vertex, Polyline
 
@@ -51,6 +53,11 @@ class TestIntersect:
         total = _total_area(pos) - _total_area(neg)
         assert total == pytest.approx(2.0, abs=0.1)
 
+    def test_disjoint_intersection_is_empty(self):
+        left = Polyline([Vertex(0, 0), Vertex(1, 0), Vertex(1, 1), Vertex(0, 1)])
+        right = Polyline([Vertex(3, 0), Vertex(4, 0), Vertex(4, 1), Vertex(3, 1)])
+        assert left.intersect(right) == ([], [])
+
 
 # ---------------------------------------------------------------------------
 # Difference
@@ -74,6 +81,20 @@ class TestDifference:
         # Both should be 2.0 but from different regions
         assert area_ab == pytest.approx(area_ba, abs=0.1)
 
+    def test_contained_difference_creates_hole(self):
+        outer = Polyline([
+            Vertex(0, 0), Vertex(5, 0), Vertex(5, 5), Vertex(0, 5),
+        ])
+        inner = Polyline([
+            Vertex(1, 1), Vertex(2, 1), Vertex(2, 2), Vertex(1, 2),
+        ])
+
+        positive, negative = outer.difference(inner)
+
+        assert len(positive) == 1
+        assert len(negative) == 1
+        assert _total_area(positive) - _total_area(negative) == pytest.approx(24.0)
+
 
 # ---------------------------------------------------------------------------
 # Symmetric difference
@@ -81,20 +102,25 @@ class TestDifference:
 
 
 class TestSymmetricDifference:
-    def test_symmetric_difference_returns_results(self):
-        """Symmetric difference of two partially overlapping squares produces
-        at least one positive polyline."""
+    def test_symmetric_difference_area_and_commutativity(self):
+        """XOR keeps both non-overlapping portions, independent of order."""
         sq_a = Polyline([
             Vertex(0, 0), Vertex(3, 0), Vertex(3, 3), Vertex(0, 3),
         ], closed=True)
         sq_b = Polyline([
             Vertex(1, 1), Vertex(4, 1), Vertex(4, 4), Vertex(1, 4),
         ], closed=True)
-        pos, neg = sq_a.symmetric_difference(sq_b)
-        total = _total_area(pos) - _total_area(neg)
-        # The library returns the A-B portion for symmetric_difference;
-        # verify it is geometrically reasonable (A-B = 9 - 4 = 5)
-        assert total == pytest.approx(5.0, abs=0.1)
+        pos_ab, neg_ab = sq_a.symmetric_difference(sq_b)
+        pos_ba, neg_ba = sq_b.symmetric_difference(sq_a)
+        area_ab = _total_area(pos_ab) - _total_area(neg_ab)
+        area_ba = _total_area(pos_ba) - _total_area(neg_ba)
+
+        # Each square has area 9 and the overlap has area 4:
+        # XOR = 9 + 9 - 2 * 4 = 10.
+        assert area_ab == pytest.approx(10.0)
+        assert area_ba == pytest.approx(10.0)
+        assert len(pos_ab) == 2
+        assert all(len(polyline) > 0 for polyline in pos_ab)
 
     def test_symmetric_difference_disjoint(self):
         """Symmetric difference of disjoint squares should return all area."""
@@ -106,7 +132,8 @@ class TestSymmetricDifference:
         ], closed=True)
         pos, neg = sq_a.symmetric_difference(sq_b)
         total = _total_area(pos) - _total_area(neg)
-        assert total > 0
+        assert total == pytest.approx(2.0)
+        assert len(pos) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +170,24 @@ class TestOffset:
         For CCW, positive distance = inward."""
         results = unit_square.offset(1.0)
         assert len(results) == 0
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="fixed after 0.7.0 on upstream master by cavalier_contours PR #81",
+    )
+    def test_repeat_position_offset_stays_finite(self):
+        polyline = Polyline([
+            Vertex(0, 0), Vertex(20, 0), Vertex(20, 0),
+            Vertex(20, 10), Vertex(0, 10),
+        ])
+
+        results = polyline.offset(-2.0)
+
+        assert len(results) == 1
+        assert len(results[0]) == 8
+        assert math.isfinite(results[0].area())
+        assert math.isfinite(results[0].length())
+        assert results[0].area() == pytest.approx(332.566370614359)
 
 
 # ---------------------------------------------------------------------------
